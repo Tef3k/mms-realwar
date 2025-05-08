@@ -75,7 +75,11 @@ function spawnBonus() {
 
 setInterval(spawnBonus, 1000);
 
+let gameEnded = false;
+
 io.on("connection", (socket) => {
+  if (gameEnded) return;
+
   console.log("✅ Joueur connecté :", socket.id);
 
   const colors = ["red", "blue", "green", "purple", "orange"];
@@ -102,8 +106,9 @@ io.on("connection", (socket) => {
   });
 
   socket.on("move", (dir) => {
+    if (gameEnded) return;
     targets[socket.id] = null;
-    const speed = 6; // vitesse x2
+    const speed = 6;
     const p = players[socket.id];
     if (!p) return;
     if (dir === "up") p.y -= speed;
@@ -113,6 +118,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("clickMove", (target) => {
+    if (gameEnded) return;
     targets[socket.id] = target;
   });
 
@@ -124,11 +130,13 @@ io.on("connection", (socket) => {
   });
 });
 
-function isCollidingWall(x, y, radius) {
-  return isInsideWall(x, y, radius);
+function getRadius(units) {
+  return 10 * (1 + units * 0.001);
 }
 
 setInterval(() => {
+  if (gameEnded) return;
+
   for (const id in targets) {
     const target = targets[id];
     const p = players[id];
@@ -136,12 +144,12 @@ setInterval(() => {
       const dx = target.x - p.x;
       const dy = target.y - p.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      const speed = 4; // vitesse x2
+      const speed = 4;
       if (dist > speed) {
         const nx = p.x + (dx / dist) * speed;
         const ny = p.y + (dy / dist) * speed;
-        const radius = 20 * (1 + p.units * 0.005);
-        if (!isCollidingWall(nx, ny, radius)) {
+        const radius = getRadius(p.units);
+        if (!isInsideWall(nx, ny, radius)) {
           p.x = nx;
           p.y = ny;
         } else {
@@ -164,8 +172,8 @@ setInterval(() => {
       const dy = a.y - b.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      const radiusA = 20 * (1 + a.units * 0.005);
-      const radiusB = 20 * (1 + b.units * 0.005);
+      const radiusA = getRadius(a.units);
+      const radiusB = getRadius(b.units);
 
       if (dist < radiusA + radiusB) {
         if (a.units > b.units) {
@@ -174,6 +182,7 @@ setInterval(() => {
           a.score += lostUnits;
           io.emit("flash", { x: b.x, y: b.y });
           if (b.units - lostUnits <= 5) {
+            io.to(b.id).emit("dead");
             delete players[b.id];
             delete targets[b.id];
             io.emit("removePlayer", b.id);
@@ -189,6 +198,7 @@ setInterval(() => {
           b.score += lostUnits;
           io.emit("flash", { x: a.x, y: a.y });
           if (a.units - lostUnits <= 5) {
+            io.to(a.id).emit("dead");
             delete players[a.id];
             delete targets[a.id];
             io.emit("removePlayer", a.id);
@@ -216,6 +226,11 @@ setInterval(() => {
       }
       return true;
     });
+
+    if (p.units >= 500 && !gameEnded) {
+      gameEnded = true;
+      io.emit("win", p.name);
+    }
   }
 
   io.emit("state", { players, bonuses });

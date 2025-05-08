@@ -28,6 +28,19 @@
       font-size: 16px;
       margin-bottom: 10px;
     }
+    #victoryMessage {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 30px;
+      font-size: 28px;
+      border: 3px solid white;
+      border-radius: 12px;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -45,8 +58,14 @@
     <button onclick="sendName()">Jouer</button>
   </div>
 
+  <div id="victoryMessage">🏆 Victoire !</div>
   <div id="scoreboard"></div>
   <canvas id="game"></canvas>
+
+  <audio id="ambiance" src="/sounds/western.mp3" loop></audio>
+  <audio id="laser" src="/sounds/laser.mp3"></audio>
+  <audio id="death" src="/sounds/death.mp3"></audio>
+  <audio id="bloop" src="/sounds/bloop.mp3"></audio>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
@@ -54,6 +73,11 @@
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const scoreboard = document.getElementById('scoreboard');
+    const victoryMessage = document.getElementById('victoryMessage');
+    const ambiance = document.getElementById('ambiance');
+    const laser = document.getElementById('laser');
+    const death = document.getElementById('death');
+    const bloop = document.getElementById('bloop');
 
     canvas.width = 1920;
     canvas.height = 960;
@@ -62,12 +86,16 @@
     let players = {};
     let bonuses = [];
     let flashes = [];
+    let previousBonuses = [];
+    let victory = false;
 
     function checkPassword() {
       const input = document.getElementById("passwordInput").value;
       if (input === "MMS") {
         document.getElementById("passwordPrompt").style.display = "none";
         document.getElementById("namePrompt").style.display = "block";
+        ambiance.volume = 0.3;
+        ambiance.play();
       } else {
         document.getElementById("passError").style.display = "block";
       }
@@ -91,6 +119,7 @@
       playerId = data.id;
       players = data.players;
       bonuses = data.bonuses;
+      previousBonuses = bonuses.map(b => b.id);
     });
 
     socket.on('newPlayer', (data) => {
@@ -103,25 +132,53 @@
 
     socket.on('state', (data) => {
       players = data.players;
+      if (playerId && data.bonuses) {
+        const newIds = data.bonuses.map(b => b.id);
+        for (const old of previousBonuses) {
+          if (!newIds.includes(old)) {
+            bloop.currentTime = 0;
+            bloop.play();
+            break;
+          }
+        }
+        previousBonuses = newIds;
+      }
       bonuses = data.bonuses;
     });
 
     socket.on('flash', (coords) => {
       flashes.push({ x: coords.x, y: coords.y, time: Date.now() });
+      laser.currentTime = 0;
+      laser.play();
+    });
+
+    socket.on('dead', () => {
+      death.currentTime = 0;
+      death.play();
+    });
+
+    socket.on('win', (name) => {
+      victoryMessage.innerText = `🏆 ${name} a gagné !`;
+      victoryMessage.style.display = 'block';
+      victory = true;
     });
 
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'z') socket.emit('move', 'up');
-      if (e.key === 's') socket.emit('move', 'down');
-      if (e.key === 'q') socket.emit('move', 'left');
-      if (e.key === 'd') socket.emit('move', 'right');
+      if (!victory) {
+        if (e.key === 'z') socket.emit('move', 'up');
+        if (e.key === 's') socket.emit('move', 'down');
+        if (e.key === 'q') socket.emit('move', 'left');
+        if (e.key === 'd') socket.emit('move', 'right');
+      }
     });
 
     canvas.addEventListener('click', (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      socket.emit('clickMove', { x, y });
+      if (!victory) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        socket.emit('clickMove', { x, y });
+      }
     });
 
     function draw() {
@@ -179,7 +236,7 @@
         const p = players[id];
         scores.push({ name: p.name, score: p.score });
 
-        const radius = 20 * (1 + p.units * 0.005);
+        const radius = 10 * (1 + p.units * 0.001);
         ctx.beginPath();
         ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
@@ -203,4 +260,6 @@
   </script>
 </body>
 </html>
+
+
 
