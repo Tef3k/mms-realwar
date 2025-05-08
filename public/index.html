@@ -5,6 +5,7 @@
   <style>
     body { margin: 0; overflow: hidden; background: #222; font-family: sans-serif; }
     canvas { display: block; border: 5px solid white; }
+    #lobby, #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
     #scoreboard {
       position: absolute;
       top: 10px;
@@ -14,35 +15,47 @@
       padding: 10px;
       border-radius: 6px;
     }
-    #deathMessage, #winMessage {
+    #volumeControl {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      color: white;
+    }
+    #endMenu {
+      display: none;
       position: absolute;
       top: 40%;
       left: 50%;
       transform: translate(-50%, -50%);
-      font-size: 32px;
-      font-weight: bold;
-      display: none;
-      padding: 10px;
-      background: rgba(0, 0, 0, 0.6);
+      background: rgba(0,0,0,0.8);
       color: white;
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
     }
-    #replayBtn {
-      position: absolute;
-      top: 60%;
-      left: 50%;
-      transform: translateX(-50%);
-      font-size: 18px;
-      padding: 10px 20px;
-      display: none;
-    }
+    #endMenu button { margin: 10px; padding: 10px 20px; }
   </style>
 </head>
 <body>
   <canvas id="game"></canvas>
   <div id="scoreboard"></div>
-  <div id="deathMessage">Vous êtes éliminé</div>
-  <div id="winMessage">Victoire !</div>
-  <button id="replayBtn" onclick="location.reload()">Rejouer</button>
+  <div id="volumeControl">
+    Volume : <input type="range" id="volume" min="0" max="1" step="0.01" value="1">
+  </div>
+
+  <div id="lobby">
+    <h1>RealWar.io</h1>
+    <p>En attente des joueurs...</p>
+    <div id="lobbyList"></div>
+    <button onclick="setReady()">Je suis prêt</button>
+    <div id="countdown"></div>
+  </div>
+
+  <div id="endMenu">
+    <h2 id="endMessage"></h2>
+    <button onclick="location.reload()">Rejouer</button>
+    <button onclick="window.close()">Quitter</button>
+  </div>
 
   <audio id="bloop" src="/sounds/bloop.mp3"></audio>
   <audio id="death" src="/sounds/death.mp3"></audio>
@@ -58,7 +71,6 @@
     canvas.height = 960;
 
     const socket = io();
-
     let playerId = null;
     let players = {};
     let bonuses = [];
@@ -70,6 +82,11 @@
     const death = document.getElementById("death");
     const laser = document.getElementById("laser");
     const toc = document.getElementById("toc");
+    const music = document.getElementById("music");
+    document.getElementById("volume").addEventListener("input", (e) => {
+      const vol = e.target.value;
+      [bloop, death, laser, toc, music].forEach(a => a.volume = vol);
+    });
 
     socket.on("askPassword", () => {
       const pw = prompt("Mot de passe :");
@@ -81,15 +98,24 @@
       socket.emit("setName", name);
     });
 
-    socket.on("init", (data) => {
-      playerId = data.id;
-      players = data.players;
-      bonuses = data.bonuses;
-      walls = data.walls;
+    socket.on("lobbyUpdate", (list) => {
+      const lobbyDiv = document.getElementById("lobbyList");
+      lobbyDiv.innerHTML = list.map(p => `<div>${p.name} ${p.ready ? "✅" : "❌"}</div>`).join("");
     });
 
-    socket.on("newPlayer", (p) => { players[p.id] = p });
-    socket.on("removePlayer", (id) => { delete players[id] });
+    socket.on("startCountdown", (s) => {
+      const countdown = document.getElementById("countdown");
+      let time = s;
+      countdown.innerText = `Début dans ${time}...`;
+      const interval = setInterval(() => {
+        time--;
+        countdown.innerText = `Début dans ${time}...`;
+        if (time <= 0) {
+          clearInterval(interval);
+          document.getElementById("lobby").style.display = "none";
+        }
+      }, 1000);
+    });
 
     socket.on("state", (state) => {
       players = state.players;
@@ -100,19 +126,12 @@
 
     socket.on("bloop", () => bloop.play());
     socket.on("death", () => death.play());
-    socket.on("hit", () => toc.play());
+    socket.on("toc", () => toc.play());
     socket.on("laser", () => laser.play());
 
-    socket.on("dead", () => {
-      eliminated = true;
-      document.getElementById("deathMessage").style.display = "block";
-      document.getElementById("replayBtn").style.display = "block";
-    });
-
-    socket.on("win", (winner) => {
-      document.getElementById("winMessage").textContent = winner + " a gagné !";
-      document.getElementById("winMessage").style.display = "block";
-      document.getElementById("replayBtn").style.display = "block";
+    socket.on("win", (name) => {
+      document.getElementById("endMessage").innerText = `${name} a gagné !`;
+      document.getElementById("endMenu").style.display = "block";
     });
 
     canvas.addEventListener("click", (e) => {
@@ -125,24 +144,26 @@
     });
 
     window.addEventListener("keydown", (e) => {
-      if (eliminated) return;
       if (e.code === "Space") socket.emit("placeMine");
     });
 
+    function setReady() {
+      socket.emit("setReady");
+    }
+
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
       ctx.strokeStyle = "white";
       ctx.lineWidth = 5;
       ctx.strokeRect(0, 0, canvas.width, canvas.height);
 
-      ctx.fillStyle = "#777";
+      ctx.fillStyle = "gray";
       for (const w of walls) ctx.fillRect(w.x, w.y, w.w, w.h);
 
       for (const b of bonuses) {
         ctx.beginPath();
         ctx.arc(b.x, b.y, 10, 0, Math.PI * 2);
-        ctx.fillStyle = b.type === 'red' ? "red" : b.type === 'blue' ? "blue" : "green";
+        ctx.fillStyle = b.type === "gold" ? "gold" : b.type === "brown" ? "brown" : b.type === "red" ? "red" : b.type === "blue" ? "blue" : "green";
         ctx.fill();
         ctx.fillStyle = "white";
         ctx.font = "10px sans-serif";
@@ -151,7 +172,7 @@
       }
 
       for (const m of mines) {
-        const color = players[m.owner]?.color || "gray";
+        const color = players[m.owner]?.color || "white";
         ctx.fillStyle = color;
         ctx.fillRect(m.x - 5, m.y - 5, 10, 10);
       }
@@ -159,7 +180,7 @@
       for (const id in players) {
         const p = players[id];
         if (p.dead) continue;
-        const r = 10 * (1 + p.units * 0.001);
+        const r = 10 * (1 + p.units * 0.002);
         ctx.beginPath();
         ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
@@ -171,7 +192,7 @@
         ctx.fillText(p.units + " u.", p.x, p.y + 4);
       }
 
-      let ranking = Object.values(players).sort((a, b) => b.score - a.score);
+      const ranking = Object.values(players).sort((a, b) => b.score - a.score);
       document.getElementById("scoreboard").innerHTML = ranking.map(p => `${p.name}: ${p.score}`).join("<br>");
 
       requestAnimationFrame(draw);
@@ -180,4 +201,5 @@
   </script>
 </body>
 </html>
+
 
