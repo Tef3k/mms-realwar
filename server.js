@@ -1,4 +1,4 @@
-// === Serveur MMS-RealWar à jour avec envoi des obstacles ===
+// === Serveur MMS-RealWar avec tirs directionnels et sons ===
 const express = require("express");
 const app = express();
 const http = require("http").createServer(app);
@@ -98,18 +98,17 @@ io.on("connection", (socket) => {
     targets[socket.id] = target;
   });
 
-  socket.on("shoot", () => {
+  socket.on("fire", (dir) => {
     const p = players[socket.id];
     if (!p || p.dead || p.units <= 1) return;
     p.units -= 1;
-    const speed = 6;
     projectiles.push({
       id: Date.now() + Math.random(),
       from: socket.id,
       x: p.x,
       y: p.y,
-      dx: p.direction.x * speed,
-      dy: p.direction.y * speed
+      dx: dir.x * 6,
+      dy: dir.y * 6
     });
   });
 
@@ -148,6 +147,7 @@ setInterval(() => {
           t.dead = true;
           io.to(t.id).emit("dead");
           io.to(p.from).emit("dead");
+          io.emit("laser");
         }
         return false;
       }
@@ -200,10 +200,13 @@ setInterval(() => {
           a.units += lost;
           a.score += lost;
           io.to(a.id).emit("flash", { x: b.x, y: b.y });
+          io.to(a.id).emit("death");
+          io.to(b.id).emit("death");
           if (b.units - lost <= 1) {
             b.dead = true;
             io.to(b.id).emit("dead");
             io.to(a.id).emit("dead");
+            io.emit("laser");
           } else {
             b.units -= lost;
             const pos = getSafePosition();
@@ -215,10 +218,13 @@ setInterval(() => {
           b.units += lost;
           b.score += lost;
           io.to(b.id).emit("flash", { x: a.x, y: a.y });
+          io.to(b.id).emit("death");
+          io.to(a.id).emit("death");
           if (a.units - lost <= 1) {
             a.dead = true;
             io.to(a.id).emit("dead");
             io.to(b.id).emit("dead");
+            io.emit("laser");
           } else {
             a.units -= lost;
             const pos = getSafePosition();
@@ -240,6 +246,7 @@ setInterval(() => {
       if (dist < 20) {
         p.units += b.amount;
         p.score += b.amount;
+        io.to(p.id).emit("bloop");
         return false;
       }
       return true;

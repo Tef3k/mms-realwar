@@ -43,6 +43,20 @@
     }
     #victoryMessage { top: 30%; }
     #deathMessage { top: 60%; color: red; }
+    #replayBtn {
+      display: none;
+      position: absolute;
+      top: 75%;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 18px;
+      padding: 10px 20px;
+      background: #555;
+      border: 2px solid white;
+      border-radius: 8px;
+      color: white;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -61,6 +75,7 @@
 
   <div id="victoryMessage">🏆 Victoire !</div>
   <div id="deathMessage">💀 Vous êtes éliminé</div>
+  <button id="replayBtn" onclick="location.reload()">🔁 Rejouer</button>
 
   <div id="scoreboard"></div>
   <canvas id="game"></canvas>
@@ -79,6 +94,7 @@
     const scoreboard = document.getElementById('scoreboard');
     const victoryMessage = document.getElementById('victoryMessage');
     const deathMessage = document.getElementById('deathMessage');
+    const replayBtn = document.getElementById('replayBtn');
 
     const ambiance = document.getElementById('ambiance');
     const laser = document.getElementById('laser');
@@ -97,6 +113,7 @@
     let previousBonuses = [];
     let victory = false;
     let eliminated = false;
+    let walls = [];
 
     function checkPassword() {
       const input = document.getElementById("passwordInput").value;
@@ -126,27 +143,25 @@
       playerId = data.id;
       players = data.players;
       bonuses = data.bonuses;
+      walls = data.walls || [];
       previousBonuses = bonuses.map(b => b.id);
     });
-
-    socket.on('newPlayer', (data) => { players[data.id] = data; });
-    socket.on('removePlayer', (id) => { delete players[id]; });
 
     socket.on('state', (data) => {
       players = data.players;
       bonuses = data.bonuses;
       projectiles = data.projectiles || [];
+      walls = data.walls || [];
     });
 
     socket.on('flash', ({ x, y }) => {
       flashes.push({ x, y, time: Date.now() });
-      laser.currentTime = 0;
-      laser.play();
     });
 
     socket.on('dead', () => {
       eliminated = true;
       deathMessage.style.display = 'block';
+      replayBtn.style.display = 'block';
       death.currentTime = 0;
       death.play();
     });
@@ -154,6 +169,16 @@
     socket.on('hit', () => {
       toc.currentTime = 0;
       toc.play();
+    });
+
+    socket.on('bloop', () => {
+      bloop.currentTime = 0;
+      bloop.play();
+    });
+
+    socket.on('laser', () => {
+      laser.currentTime = 0;
+      laser.play();
     });
 
     socket.on('win', (name) => {
@@ -164,22 +189,28 @@
 
     window.addEventListener('keydown', (e) => {
       if (!victory && !eliminated) {
-        if (e.key === 'z') socket.emit('move', 'up');
-        if (e.key === 's') socket.emit('move', 'down');
-        if (e.key === 'q') socket.emit('move', 'left');
-        if (e.key === 'd') socket.emit('move', 'right');
-        if (e.code === 'Space') socket.emit('shoot');
+        if (e.key === 'z') socket.emit('fire', { x: 0, y: -1 });
+        if (e.key === 's') socket.emit('fire', { x: 0, y: 1 });
+        if (e.key === 'q') socket.emit('fire', { x: -1, y: 0 });
+        if (e.key === 'd') socket.emit('fire', { x: 1, y: 0 });
+      }
+    });
+
+    canvas.addEventListener('click', (e) => {
+      if (!victory && !eliminated) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        socket.emit('clickMove', { x, y });
       }
     });
 
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const radius = u => 10 * (1 + u * 0.001);
-
       ctx.fillStyle = '#aaa';
-      for (const wall of (window.walls || [])) {
-        ctx.fillRect(wall.x, wall.y, wall.w.w, wall.h);
+      for (const wall of walls) {
+        ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
       }
 
       for (const p of projectiles) {
@@ -200,7 +231,7 @@
       for (const id in players) {
         const p = players[id];
         if (!p.dead) {
-          const r = radius(p.units);
+          const r = 10 * (1 + p.units * 0.001);
           ctx.beginPath();
           ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
           ctx.fillStyle = p.color;
@@ -223,7 +254,4 @@
   </script>
 </body>
 </html>
-
-
-
 
