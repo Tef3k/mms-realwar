@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MMS-RealWar</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #222; color: white; font-family: sans-serif; }
+    canvas { display: block; border: 4px solid white; box-sizing: border-box; }
+    #scoreboard {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 10px;
+      border-radius: 8px;
+    }
+    .prompt {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #333;
+      padding: 20px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    input {
+      padding: 5px;
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="passwordPrompt" class="prompt">
+    <p>Mot de passe requis :</p>
+    <input type="password" id="passwordInput" />
+    <br>
+    <button onclick="checkPassword()">Valider</button>
+    <p id="passError" style="color:red; display:none;">Mot de passe incorrect</p>
+  </div>
+
+  <div id="namePrompt" class="prompt" style="display:none;">
+    <p>Entrez votre nom :</p>
+    <input type="text" id="nameInput" maxlength="20" />
+    <button onclick="sendName()">Jouer</button>
+  </div>
+
+  <div id="scoreboard"></div>
+  <canvas id="game"></canvas>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreboard = document.getElementById('scoreboard');
+
+    canvas.width = 1920;
+    canvas.height = 960;
+
+    let playerId = null;
+    let players = {};
+    let bonuses = [];
+    let flashes = [];
+
+    function checkPassword() {
+      const input = document.getElementById("passwordInput").value;
+      if (input === "MMS") {
+        document.getElementById("passwordPrompt").style.display = "none";
+        document.getElementById("namePrompt").style.display = "block";
+      } else {
+        document.getElementById("passError").style.display = "block";
+      }
+    }
+
+    function sendName() {
+      const name = document.getElementById('nameInput').value.trim();
+      if (name) {
+        socket.emit('setName', name);
+        document.getElementById('namePrompt').style.display = 'none';
+      }
+    }
+
+    socket.on('askName', () => {
+      if (document.getElementById("passwordPrompt").style.display === "none") {
+        document.getElementById("namePrompt").style.display = "block";
+      }
+    });
+
+    socket.on('init', (data) => {
+      playerId = data.id;
+      players = data.players;
+      bonuses = data.bonuses;
+    });
+
+    socket.on('newPlayer', (data) => {
+      players[data.id] = data;
+    });
+
+    socket.on('removePlayer', (id) => {
+      delete players[id];
+    });
+
+    socket.on('state', (data) => {
+      players = data.players;
+      bonuses = data.bonuses;
+    });
+
+    socket.on('flash', (coords) => {
+      flashes.push({ x: coords.x, y: coords.y, time: Date.now() });
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'z') socket.emit('move', 'up');
+      if (e.key === 's') socket.emit('move', 'down');
+      if (e.key === 'q') socket.emit('move', 'left');
+      if (e.key === 'd') socket.emit('move', 'right');
+    });
+
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      socket.emit('clickMove', { x, y });
+    });
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const walls = [
+        { x: 85, y: 569, w: 143, h: 167 },
+        { x: 266, y: 732, w: 136, h: 178 },
+        { x: 1049, y: 449, w: 172, h: 181 },
+        { x: 137, y: 691, w: 170, h: 171 },
+        { x: 1087, y: 309, w: 117, h: 109 },
+        { x: 278, y: 209, w: 91, h: 164 },
+        { x: 1142, y: 398, w: 92, h: 172 },
+        { x: 676, y: 565, w: 93, h: 125 },
+        { x: 807, y: 315, w: 166, h: 187 },
+        { x: 1607, y: 331, w: 124, h: 92 },
+        { x: 903, y: 293, w: 182, h: 186 },
+        { x: 1122, y: 624, w: 137, h: 138 },
+        { x: 1262, y: 229, w: 184, h: 131 },
+        { x: 571, y: 625, w: 122, h: 112 },
+        { x: 1015, y: 322, w: 165, h: 145 },
+        { x: 755, y: 555, w: 197, h: 182 },
+        { x: 494, y: 505, w: 181, h: 184 },
+        { x: 1554, y: 219, w: 131, h: 165 },
+        { x: 652, y: 190, w: 183, h: 197 },
+        { x: 130, y: 400, w: 95, h: 110 }
+      ];
+
+      ctx.fillStyle = '#444';
+      for (const wall of walls) {
+        ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+      }
+
+      flashes = flashes.filter(f => Date.now() - f.time < 300);
+      for (const f of flashes) {
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, 40, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.fill();
+      }
+
+      for (const bonus of bonuses) {
+        ctx.beginPath();
+        ctx.arc(bonus.x, bonus.y, 10, 0, Math.PI * 2);
+        ctx.fillStyle = bonus.amount === 1 ? 'green' : bonus.amount === 2 ? 'red' : 'blue';
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = '12px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('+' + bonus.amount, bonus.x, bonus.y + 4);
+      }
+
+      let scores = [];
+      for (const id in players) {
+        const p = players[id];
+        scores.push({ name: p.name, score: p.score });
+
+        const radius = 20 * (1 + p.units * 0.005);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(p.name, p.x, p.y - radius - 10);
+        ctx.fillText(p.units + ' u.', p.x, p.y + 6);
+      }
+
+      scores.sort((a, b) => b.score - a.score);
+      scoreboard.innerHTML = '<b>🏆 Classement :</b><br>' +
+        scores.slice(0, 5).map(p => `${p.name}: ${p.score}`).join('<br>');
+
+      requestAnimationFrame(draw);
+    }
+
+    draw();
+  </script>
+</body>
+</html>
+
