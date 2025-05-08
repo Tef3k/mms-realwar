@@ -1,255 +1,183 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>MMS-RealWar</title>
+  <title>RealWar.io</title>
   <style>
-    body { margin: 0; overflow: hidden; background: #222; color: white; font-family: sans-serif; }
-    canvas { display: block; border: 4px solid white; box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; background: #222; font-family: sans-serif; }
+    canvas { display: block; border: 5px solid white; }
     #scoreboard {
       position: absolute;
       top: 10px;
-      right: 10px;
-      background: rgba(0, 0, 0, 0.5);
+      left: 10px;
+      background: rgba(0,0,0,0.6);
+      color: white;
       padding: 10px;
-      border-radius: 8px;
+      border-radius: 6px;
     }
-    .prompt {
+    #deathMessage, #winMessage {
       position: absolute;
-      top: 50%;
+      top: 40%;
       left: 50%;
       transform: translate(-50%, -50%);
-      background: #333;
-      padding: 20px;
-      border-radius: 8px;
-      text-align: center;
-    }
-    input {
-      padding: 5px;
-      font-size: 16px;
-      margin-bottom: 10px;
-    }
-    #victoryMessage, #deathMessage {
-      position: absolute;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0,0,0,0.8);
+      font-size: 32px;
+      font-weight: bold;
+      display: none;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.6);
       color: white;
-      padding: 20px;
-      font-size: 28px;
-      border: 3px solid white;
-      border-radius: 12px;
-      display: none;
-      z-index: 10;
     }
-    #victoryMessage { top: 30%; }
-    #deathMessage { top: 60%; color: red; }
     #replayBtn {
-      display: none;
       position: absolute;
-      top: 75%;
+      top: 60%;
       left: 50%;
       transform: translateX(-50%);
       font-size: 18px;
       padding: 10px 20px;
-      background: #555;
-      border: 2px solid white;
-      border-radius: 8px;
-      color: white;
-      cursor: pointer;
+      display: none;
     }
   </style>
 </head>
 <body>
-  <div id="passwordPrompt" class="prompt">
-    <p>Mot de passe requis :</p>
-    <input type="password" id="passwordInput" />
-    <br>
-    <button onclick="checkPassword()">Valider</button>
-    <p id="passError" style="color:red; display:none;">Mot de passe incorrect</p>
-  </div>
-  <div id="namePrompt" class="prompt" style="display:none;">
-    <p>Entrez votre nom :</p>
-    <input type="text" id="nameInput" maxlength="20" />
-    <button onclick="sendName()">Jouer</button>
-  </div>
-
-  <div id="victoryMessage">🏆 Victoire !</div>
-  <div id="deathMessage">💀 Vous êtes éliminé</div>
-  <button id="replayBtn" onclick="location.reload()">🔁 Rejouer</button>
-
-  <div id="scoreboard"></div>
   <canvas id="game"></canvas>
+  <div id="scoreboard"></div>
+  <div id="deathMessage">Vous êtes éliminé</div>
+  <div id="winMessage">Victoire !</div>
+  <button id="replayBtn" onclick="location.reload()">Rejouer</button>
 
-  <audio id="ambiance" src="/sounds/western.mp3" loop></audio>
-  <audio id="laser" src="/sounds/laser.mp3"></audio>
-  <audio id="death" src="/sounds/death.mp3"></audio>
   <audio id="bloop" src="/sounds/bloop.mp3"></audio>
+  <audio id="death" src="/sounds/death.mp3"></audio>
+  <audio id="laser" src="/sounds/laser.mp3"></audio>
   <audio id="toc" src="/sounds/toc.mp3"></audio>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    const socket = io();
-    const canvas = document.getElementById('game');
-    const ctx = canvas.getContext('2d');
-    const scoreboard = document.getElementById('scoreboard');
-    const victoryMessage = document.getElementById('victoryMessage');
-    const deathMessage = document.getElementById('deathMessage');
-    const replayBtn = document.getElementById('replayBtn');
-
-    const ambiance = document.getElementById('ambiance');
-    const laser = document.getElementById('laser');
-    const death = document.getElementById('death');
-    const bloop = document.getElementById('bloop');
-    const toc = document.getElementById('toc');
-
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
     canvas.width = 1920;
     canvas.height = 960;
+
+    const socket = io();
 
     let playerId = null;
     let players = {};
     let bonuses = [];
     let projectiles = [];
-    let flashes = [];
-    let previousBonuses = [];
-    let victory = false;
-    let eliminated = false;
     let walls = [];
+    let eliminated = false;
 
-    function checkPassword() {
-      const input = document.getElementById("passwordInput").value;
-      if (input === "MMS") {
-        document.getElementById("passwordPrompt").style.display = "none";
-        document.getElementById("namePrompt").style.display = "block";
-        ambiance.volume = 0.3;
-        ambiance.play();
-      } else {
-        document.getElementById("passError").style.display = "block";
-      }
-    }
+    const bloop = document.getElementById("bloop");
+    const death = document.getElementById("death");
+    const laser = document.getElementById("laser");
+    const toc = document.getElementById("toc");
 
-    function sendName() {
-      const name = document.getElementById('nameInput').value.trim();
-      if (name) {
-        socket.emit('setName', name);
-        document.getElementById('namePrompt').style.display = 'none';
-      }
-    }
-
-    socket.on('askName', () => {
-      document.getElementById("namePrompt").style.display = "block";
+    socket.on("askPassword", () => {
+      const pw = prompt("Mot de passe :");
+      socket.emit("checkPassword", pw);
     });
 
-    socket.on('init', (data) => {
+    socket.on("askName", () => {
+      const name = prompt("Entrez votre pseudo :") || "Joueur";
+      socket.emit("setName", name);
+    });
+
+    socket.on("init", (data) => {
       playerId = data.id;
       players = data.players;
       bonuses = data.bonuses;
-      walls = data.walls || [];
-      previousBonuses = bonuses.map(b => b.id);
+      walls = data.walls;
     });
 
-    socket.on('state', (data) => {
-      players = data.players;
-      bonuses = data.bonuses;
-      projectiles = data.projectiles || [];
-      walls = data.walls || [];
+    socket.on("newPlayer", (p) => { players[p.id] = p });
+    socket.on("removePlayer", (id) => { delete players[id] });
+
+    socket.on("state", (state) => {
+      players = state.players;
+      bonuses = state.bonuses;
+      projectiles = state.projectiles;
+      walls = state.walls;
     });
 
-    socket.on('flash', ({ x, y }) => {
-      flashes.push({ x, y, time: Date.now() });
-    });
+    socket.on("bloop", () => bloop.play());
+    socket.on("death", () => death.play());
+    socket.on("hit", () => toc.play());
+    socket.on("laser", () => laser.play());
 
-    socket.on('dead', () => {
+    socket.on("dead", () => {
       eliminated = true;
-      deathMessage.style.display = 'block';
-      replayBtn.style.display = 'block';
-      death.currentTime = 0;
-      death.play();
+      document.getElementById("deathMessage").style.display = "block";
+      document.getElementById("replayBtn").style.display = "block";
     });
 
-    socket.on('hit', () => {
-      toc.currentTime = 0;
-      toc.play();
+    socket.on("win", (winner) => {
+      document.getElementById("winMessage").textContent = winner + " a gagné !";
+      document.getElementById("winMessage").style.display = "block";
+      document.getElementById("replayBtn").style.display = "block";
     });
 
-    socket.on('bloop', () => {
-      bloop.currentTime = 0;
-      bloop.play();
+    canvas.addEventListener("click", (e) => {
+      if (eliminated) return;
+      const rect = canvas.getBoundingClientRect();
+      socket.emit("clickMove", {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      });
     });
 
-    socket.on('laser', () => {
-      laser.currentTime = 0;
-      laser.play();
-    });
-
-    socket.on('win', (name) => {
-      victoryMessage.innerText = `🏆 ${name} a gagné !`;
-      victoryMessage.style.display = 'block';
-      victory = true;
-    });
-
-    window.addEventListener('keydown', (e) => {
-      if (!victory && !eliminated) {
-        if (e.key === 'z') socket.emit('fire', { x: 0, y: -1 });
-        if (e.key === 's') socket.emit('fire', { x: 0, y: 1 });
-        if (e.key === 'q') socket.emit('fire', { x: -1, y: 0 });
-        if (e.key === 'd') socket.emit('fire', { x: 1, y: 0 });
-      }
-    });
-
-    canvas.addEventListener('click', (e) => {
-      if (!victory && !eliminated) {
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        socket.emit('clickMove', { x, y });
-      }
+    window.addEventListener("keydown", (e) => {
+      if (eliminated) return;
+      if (e.key === "z") socket.emit("fire", { x: 0, y: -1 });
+      if (e.key === "s") socket.emit("fire", { x: 0, y: 1 });
+      if (e.key === "q") socket.emit("fire", { x: -1, y: 0 });
+      if (e.key === "d") socket.emit("fire", { x: 1, y: 0 });
     });
 
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      ctx.fillStyle = '#aaa';
-      for (const wall of walls) {
-        ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
-      }
+      // Mur / cadre blanc
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 5;
+      ctx.strokeRect(0, 0, canvas.width, canvas.height);
 
-      for (const p of projectiles) {
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(p.x - 4, p.y - 4, 8, 8);
-      }
+      ctx.fillStyle = "#777";
+      for (const w of walls) ctx.fillRect(w.x, w.y, w.w, w.h);
 
       for (const b of bonuses) {
         ctx.beginPath();
         ctx.arc(b.x, b.y, 10, 0, Math.PI * 2);
-        ctx.fillStyle = b.amount === 1 ? 'green' : b.amount === 2 ? 'red' : 'blue';
+        ctx.fillStyle = b.type === 'red' ? "red" : b.type === 'blue' ? "blue" : "green";
         ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.fillText('+' + b.amount, b.x, b.y + 4);
+        ctx.fillStyle = "white";
+        ctx.font = "10px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("+" + b.amount, b.x, b.y + 3);
       }
 
-      let scores = [];
+      for (const p of projectiles) {
+        ctx.fillStyle = p.color || "white";
+        ctx.fillRect(p.x - 4, p.y - 4, 8, 8);
+      }
+
       for (const id in players) {
         const p = players[id];
-        if (!p.dead) {
-          const r = 10 * (1 + p.units * 0.001);
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-          ctx.fillStyle = p.color;
-          ctx.fill();
-
-          ctx.fillStyle = '#fff';
-          ctx.fillText(p.name, p.x, p.y - r - 10);
-          ctx.fillText(p.units + ' u.', p.x, p.y + 6);
-          scores.push({ name: p.name, score: p.score });
-        }
+        if (p.dead) continue;
+        const r = 10 * (1 + p.units * 0.001);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.fillStyle = "white";
+        ctx.font = "12px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(p.name, p.x, p.y - r - 6);
+        ctx.fillText(p.units + " u.", p.x, p.y + 4);
       }
 
-      scoreboard.innerHTML = '<b>🏆 Classement :</b><br>' +
-        scores.sort((a, b) => b.score - a.score).slice(0, 5).map(s => `${s.name}: ${s.score}`).join('<br>');
+      let ranking = Object.values(players).sort((a, b) => b.score - a.score);
+      document.getElementById("scoreboard").innerHTML = ranking.map(p => `${p.name}: ${p.score}`).join("<br>");
 
       requestAnimationFrame(draw);
     }
-
     draw();
   </script>
 </body>
