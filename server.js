@@ -1,4 +1,4 @@
-// === Serveur MMS-RealWar (Node.js + Socket.IO) ===
+// === Serveur MMS-RealWar à jour avec envoi des obstacles ===
 const express = require("express");
 const app = express();
 const http = require("http").createServer(app);
@@ -11,32 +11,17 @@ app.use(express.static("public"));
 let players = {};
 let bonuses = [];
 let targets = {};
+let projectiles = [];
 
 const ARENA_WIDTH = 1920;
 const ARENA_HEIGHT = 960;
 
-const walls = [
-  { x: 85, y: 569, w: 143, h: 167 },
-  { x: 266, y: 732, w: 136, h: 178 },
-  { x: 1049, y: 449, w: 172, h: 181 },
-  { x: 137, y: 691, w: 170, h: 171 },
-  { x: 1087, y: 309, w: 117, h: 109 },
-  { x: 278, y: 209, w: 91, h: 164 },
-  { x: 1142, y: 398, w: 92, h: 172 },
-  { x: 676, y: 565, w: 93, h: 125 },
-  { x: 807, y: 315, w: 166, h: 187 },
-  { x: 1607, y: 331, w: 124, h: 92 },
-  { x: 903, y: 293, w: 182, h: 186 },
-  { x: 1122, y: 624, w: 137, h: 138 },
-  { x: 1262, y: 229, w: 184, h: 131 },
-  { x: 571, y: 625, w: 122, h: 112 },
-  { x: 1015, y: 322, w: 165, h: 145 },
-  { x: 755, y: 555, w: 197, h: 182 },
-  { x: 494, y: 505, w: 181, h: 184 },
-  { x: 1554, y: 219, w: 131, h: 165 },
-  { x: 652, y: 190, w: 183, h: 197 },
-  { x: 130, y: 400, w: 95, h: 110 }
-];
+const walls = [...Array(10)].map(() => ({
+  x: Math.random() * 1700 + 50,
+  y: Math.random() * 700 + 50,
+  w: 100 + Math.random() * 100,
+  h: 100 + Math.random() * 100
+}));
 
 function isInsideWall(x, y, radius = 20) {
   return walls.some(w =>
@@ -53,7 +38,7 @@ function getSafePosition() {
     if (!isInsideWall(x, y, 25)) return { x, y };
     tries++;
   }
-  return { x: 100, y: 100 }; // fallback
+  return { x: 100, y: 100 };
 }
 
 function spawnBonus() {
@@ -64,27 +49,17 @@ function spawnBonus() {
 
   const amount = type === 'troop' ? 1 : type === 'weapon' ? 2 : 5;
   const pos = getSafePosition();
-
-  bonuses.push({
-    id: Date.now(),
-    ...pos,
-    type,
-    amount
-  });
+  bonuses.push({ id: Date.now(), ...pos, type, amount });
 }
-
 setInterval(spawnBonus, 1000);
 
 let gameEnded = false;
-
 io.on("connection", (socket) => {
   if (gameEnded) return;
 
-  console.log("✅ Joueur connecté :", socket.id);
-
+  const pos = getSafePosition();
   const colors = ["red", "blue", "green", "purple", "orange"];
   const color = colors[Math.floor(Math.random() * colors.length)];
-  const pos = getSafePosition();
 
   players[socket.id] = {
     id: socket.id,
@@ -92,7 +67,9 @@ io.on("connection", (socket) => {
     units: 5,
     name: "",
     color,
-    score: 0
+    score: 0,
+    direction: { x: 0, y: -1 },
+    dead: false
   };
 
   targets[socket.id] = null;
@@ -101,29 +78,42 @@ io.on("connection", (socket) => {
 
   socket.on("setName", (name) => {
     players[socket.id].name = name;
-    socket.emit("init", { id: socket.id, players, bonuses });
+    socket.emit("init", { id: socket.id, players, bonuses, walls });
     socket.broadcast.emit("newPlayer", players[socket.id]);
   });
 
   socket.on("move", (dir) => {
-    if (gameEnded) return;
+    if (players[socket.id]?.dead || gameEnded) return;
     targets[socket.id] = null;
-    const speed = 6;
     const p = players[socket.id];
-    if (!p) return;
-    if (dir === "up") p.y -= speed;
-    if (dir === "down") p.y += speed;
-    if (dir === "left") p.x -= speed;
-    if (dir === "right") p.x += speed;
+    const speed = 6;
+    if (dir === "up") p.y -= speed, p.direction = { x: 0, y: -1 };
+    if (dir === "down") p.y += speed, p.direction = { x: 0, y: 1 };
+    if (dir === "left") p.x -= speed, p.direction = { x: -1, y: 0 };
+    if (dir === "right") p.x += speed, p.direction = { x: 1, y: 0 };
   });
 
   socket.on("clickMove", (target) => {
-    if (gameEnded) return;
+    if (players[socket.id]?.dead || gameEnded) return;
     targets[socket.id] = target;
   });
 
+  socket.on("shoot", () => {
+    const p = players[socket.id];
+    if (!p || p.dead || p.units <= 1) return;
+    p.units -= 1;
+    const speed = 6;
+    projectiles.push({
+      id: Date.now() + Math.random(),
+      from: socket.id,
+      x: p.x,
+      y: p.y,
+      dx: p.direction.x * speed,
+      dy: p.direction.y * speed
+    });
+  });
+
   socket.on("disconnect", () => {
-    console.log("❌ Joueur déconnecté :", socket.id);
     delete players[socket.id];
     delete targets[socket.id];
     io.emit("removePlayer", socket.id);
@@ -137,10 +127,39 @@ function getRadius(units) {
 setInterval(() => {
   if (gameEnded) return;
 
+  projectiles = projectiles.filter(p => {
+    p.x += p.dx;
+    p.y += p.dy;
+    if (p.x < 0 || p.y < 0 || p.x > ARENA_WIDTH || p.y > ARENA_HEIGHT) return false;
+
+    for (const id in players) {
+      if (id === p.from || players[id].dead) continue;
+      const t = players[id];
+      const dx = p.x - t.x;
+      const dy = p.y - t.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < getRadius(t.units)) {
+        players[p.from].units += 2;
+        players[p.from].score += 2;
+        t.units -= 2;
+        io.to(p.from).emit("hit");
+        io.to(t.id).emit("hit");
+        if (t.units <= 1) {
+          t.dead = true;
+          io.to(t.id).emit("dead");
+          io.to(p.from).emit("dead");
+        }
+        return false;
+      }
+    }
+    return true;
+  });
+
   for (const id in targets) {
     const target = targets[id];
     const p = players[id];
-    if (target && p) {
+    if (!p || p.dead) continue;
+    if (target) {
       const dx = target.x - p.x;
       const dy = target.y - p.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -168,42 +187,40 @@ setInterval(() => {
     for (let j = i + 1; j < ids.length; j++) {
       const a = players[ids[i]];
       const b = players[ids[j]];
+      if (a.dead || b.dead) continue;
       const dx = a.x - b.x;
       const dy = a.y - b.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
+      const rA = getRadius(a.units);
+      const rB = getRadius(b.units);
 
-      const radiusA = getRadius(a.units);
-      const radiusB = getRadius(b.units);
-
-      if (dist < radiusA + radiusB) {
+      if (dist < rA + rB) {
         if (a.units > b.units) {
-          const lostUnits = Math.floor(b.units * 0.25);
-          a.units += lostUnits;
-          a.score += lostUnits;
-          io.emit("flash", { x: b.x, y: b.y });
-          if (b.units - lostUnits <= 5) {
+          const lost = Math.floor(b.units * 0.25);
+          a.units += lost;
+          a.score += lost;
+          io.to(a.id).emit("flash", { x: b.x, y: b.y });
+          if (b.units - lost <= 1) {
+            b.dead = true;
             io.to(b.id).emit("dead");
-            delete players[b.id];
-            delete targets[b.id];
-            io.emit("removePlayer", b.id);
+            io.to(a.id).emit("dead");
           } else {
-            b.units -= lostUnits;
+            b.units -= lost;
             const pos = getSafePosition();
             b.x = pos.x;
             b.y = pos.y;
           }
         } else if (b.units > a.units) {
-          const lostUnits = Math.floor(a.units * 0.25);
-          b.units += lostUnits;
-          b.score += lostUnits;
-          io.emit("flash", { x: a.x, y: a.y });
-          if (a.units - lostUnits <= 5) {
+          const lost = Math.floor(a.units * 0.25);
+          b.units += lost;
+          b.score += lost;
+          io.to(b.id).emit("flash", { x: a.x, y: a.y });
+          if (a.units - lost <= 1) {
+            a.dead = true;
             io.to(a.id).emit("dead");
-            delete players[a.id];
-            delete targets[a.id];
-            io.emit("removePlayer", a.id);
+            io.to(b.id).emit("dead");
           } else {
-            a.units -= lostUnits;
+            a.units -= lost;
             const pos = getSafePosition();
             a.x = pos.x;
             a.y = pos.y;
@@ -215,13 +232,14 @@ setInterval(() => {
 
   for (const id in players) {
     const p = players[id];
-    bonuses = bonuses.filter((bonus) => {
-      const dx = p.x - bonus.x;
-      const dy = p.y - bonus.y;
+    if (p.dead) continue;
+    bonuses = bonuses.filter(b => {
+      const dx = p.x - b.x;
+      const dy = p.y - b.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < 20) {
-        p.units += bonus.amount;
-        p.score += bonus.amount;
+        p.units += b.amount;
+        p.score += b.amount;
         return false;
       }
       return true;
@@ -233,9 +251,10 @@ setInterval(() => {
     }
   }
 
-  io.emit("state", { players, bonuses });
+  io.emit("state", { players, bonuses, projectiles, walls });
 }, 1000 / 30);
 
 http.listen(PORT, () => {
   console.log("✅ MMS-RealWar prêt sur http://localhost:" + PORT);
 });
+

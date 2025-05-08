@@ -28,19 +28,21 @@
       font-size: 16px;
       margin-bottom: 10px;
     }
-    #victoryMessage {
+    #victoryMessage, #deathMessage {
       position: absolute;
-      top: 50%;
       left: 50%;
-      transform: translate(-50%, -50%);
+      transform: translateX(-50%);
       background: rgba(0,0,0,0.8);
       color: white;
-      padding: 30px;
+      padding: 20px;
       font-size: 28px;
       border: 3px solid white;
       border-radius: 12px;
       display: none;
+      z-index: 10;
     }
+    #victoryMessage { top: 30%; }
+    #deathMessage { top: 60%; color: red; }
   </style>
 </head>
 <body>
@@ -51,7 +53,6 @@
     <button onclick="checkPassword()">Valider</button>
     <p id="passError" style="color:red; display:none;">Mot de passe incorrect</p>
   </div>
-
   <div id="namePrompt" class="prompt" style="display:none;">
     <p>Entrez votre nom :</p>
     <input type="text" id="nameInput" maxlength="20" />
@@ -59,6 +60,8 @@
   </div>
 
   <div id="victoryMessage">🏆 Victoire !</div>
+  <div id="deathMessage">💀 Vous êtes éliminé</div>
+
   <div id="scoreboard"></div>
   <canvas id="game"></canvas>
 
@@ -66,6 +69,7 @@
   <audio id="laser" src="/sounds/laser.mp3"></audio>
   <audio id="death" src="/sounds/death.mp3"></audio>
   <audio id="bloop" src="/sounds/bloop.mp3"></audio>
+  <audio id="toc" src="/sounds/toc.mp3"></audio>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
@@ -74,10 +78,13 @@
     const ctx = canvas.getContext('2d');
     const scoreboard = document.getElementById('scoreboard');
     const victoryMessage = document.getElementById('victoryMessage');
+    const deathMessage = document.getElementById('deathMessage');
+
     const ambiance = document.getElementById('ambiance');
     const laser = document.getElementById('laser');
     const death = document.getElementById('death');
     const bloop = document.getElementById('bloop');
+    const toc = document.getElementById('toc');
 
     canvas.width = 1920;
     canvas.height = 960;
@@ -85,9 +92,11 @@
     let playerId = null;
     let players = {};
     let bonuses = [];
+    let projectiles = [];
     let flashes = [];
     let previousBonuses = [];
     let victory = false;
+    let eliminated = false;
 
     function checkPassword() {
       const input = document.getElementById("passwordInput").value;
@@ -110,9 +119,7 @@
     }
 
     socket.on('askName', () => {
-      if (document.getElementById("passwordPrompt").style.display === "none") {
-        document.getElementById("namePrompt").style.display = "block";
-      }
+      document.getElementById("namePrompt").style.display = "block";
     });
 
     socket.on('init', (data) => {
@@ -122,39 +129,31 @@
       previousBonuses = bonuses.map(b => b.id);
     });
 
-    socket.on('newPlayer', (data) => {
-      players[data.id] = data;
-    });
-
-    socket.on('removePlayer', (id) => {
-      delete players[id];
-    });
+    socket.on('newPlayer', (data) => { players[data.id] = data; });
+    socket.on('removePlayer', (id) => { delete players[id]; });
 
     socket.on('state', (data) => {
       players = data.players;
-      if (playerId && data.bonuses) {
-        const newIds = data.bonuses.map(b => b.id);
-        for (const old of previousBonuses) {
-          if (!newIds.includes(old)) {
-            bloop.currentTime = 0;
-            bloop.play();
-            break;
-          }
-        }
-        previousBonuses = newIds;
-      }
       bonuses = data.bonuses;
+      projectiles = data.projectiles || [];
     });
 
-    socket.on('flash', (coords) => {
-      flashes.push({ x: coords.x, y: coords.y, time: Date.now() });
+    socket.on('flash', ({ x, y }) => {
+      flashes.push({ x, y, time: Date.now() });
       laser.currentTime = 0;
       laser.play();
     });
 
     socket.on('dead', () => {
+      eliminated = true;
+      deathMessage.style.display = 'block';
       death.currentTime = 0;
       death.play();
+    });
+
+    socket.on('hit', () => {
+      toc.currentTime = 0;
+      toc.play();
     });
 
     socket.on('win', (name) => {
@@ -164,94 +163,58 @@
     });
 
     window.addEventListener('keydown', (e) => {
-      if (!victory) {
+      if (!victory && !eliminated) {
         if (e.key === 'z') socket.emit('move', 'up');
         if (e.key === 's') socket.emit('move', 'down');
         if (e.key === 'q') socket.emit('move', 'left');
         if (e.key === 'd') socket.emit('move', 'right');
-      }
-    });
-
-    canvas.addEventListener('click', (e) => {
-      if (!victory) {
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        socket.emit('clickMove', { x, y });
+        if (e.code === 'Space') socket.emit('shoot');
       }
     });
 
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const walls = [
-        { x: 85, y: 569, w: 143, h: 167 },
-        { x: 266, y: 732, w: 136, h: 178 },
-        { x: 1049, y: 449, w: 172, h: 181 },
-        { x: 137, y: 691, w: 170, h: 171 },
-        { x: 1087, y: 309, w: 117, h: 109 },
-        { x: 278, y: 209, w: 91, h: 164 },
-        { x: 1142, y: 398, w: 92, h: 172 },
-        { x: 676, y: 565, w: 93, h: 125 },
-        { x: 807, y: 315, w: 166, h: 187 },
-        { x: 1607, y: 331, w: 124, h: 92 },
-        { x: 903, y: 293, w: 182, h: 186 },
-        { x: 1122, y: 624, w: 137, h: 138 },
-        { x: 1262, y: 229, w: 184, h: 131 },
-        { x: 571, y: 625, w: 122, h: 112 },
-        { x: 1015, y: 322, w: 165, h: 145 },
-        { x: 755, y: 555, w: 197, h: 182 },
-        { x: 494, y: 505, w: 181, h: 184 },
-        { x: 1554, y: 219, w: 131, h: 165 },
-        { x: 652, y: 190, w: 183, h: 197 },
-        { x: 130, y: 400, w: 95, h: 110 }
-      ];
+      const radius = u => 10 * (1 + u * 0.001);
 
-      ctx.fillStyle = '#444';
-      for (const wall of walls) {
-        ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+      ctx.fillStyle = '#aaa';
+      for (const wall of (window.walls || [])) {
+        ctx.fillRect(wall.x, wall.y, wall.w.w, wall.h);
       }
 
-      flashes = flashes.filter(f => Date.now() - f.time < 300);
-      for (const f of flashes) {
-        ctx.beginPath();
-        ctx.arc(f.x, f.y, 40, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.3)';
-        ctx.fill();
+      for (const p of projectiles) {
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(p.x - 4, p.y - 4, 8, 8);
       }
 
-      for (const bonus of bonuses) {
+      for (const b of bonuses) {
         ctx.beginPath();
-        ctx.arc(bonus.x, bonus.y, 10, 0, Math.PI * 2);
-        ctx.fillStyle = bonus.amount === 1 ? 'green' : bonus.amount === 2 ? 'red' : 'blue';
+        ctx.arc(b.x, b.y, 10, 0, Math.PI * 2);
+        ctx.fillStyle = b.amount === 1 ? 'green' : b.amount === 2 ? 'red' : 'blue';
         ctx.fill();
         ctx.fillStyle = '#fff';
-        ctx.font = '12px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('+' + bonus.amount, bonus.x, bonus.y + 4);
+        ctx.fillText('+' + b.amount, b.x, b.y + 4);
       }
 
       let scores = [];
       for (const id in players) {
         const p = players[id];
-        scores.push({ name: p.name, score: p.score });
+        if (!p.dead) {
+          const r = radius(p.units);
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          ctx.fillStyle = p.color;
+          ctx.fill();
 
-        const radius = 10 * (1 + p.units * 0.001);
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.fill();
-
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 16px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(p.name, p.x, p.y - radius - 10);
-        ctx.fillText(p.units + ' u.', p.x, p.y + 6);
+          ctx.fillStyle = '#fff';
+          ctx.fillText(p.name, p.x, p.y - r - 10);
+          ctx.fillText(p.units + ' u.', p.x, p.y + 6);
+          scores.push({ name: p.name, score: p.score });
+        }
       }
 
-      scores.sort((a, b) => b.score - a.score);
       scoreboard.innerHTML = '<b>🏆 Classement :</b><br>' +
-        scores.slice(0, 5).map(p => `${p.name}: ${p.score}`).join('<br>');
+        scores.sort((a, b) => b.score - a.score).slice(0, 5).map(s => `${s.name}: ${s.score}`).join('<br>');
 
       requestAnimationFrame(draw);
     }
@@ -260,6 +223,7 @@
   </script>
 </body>
 </html>
+
 
 
 
