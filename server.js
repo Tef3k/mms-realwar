@@ -1,4 +1,4 @@
-// === Serveur RealWar.io ===
+// === Serveur RealWar.io (version mines uniquement) ===
 const express = require("express");
 const app = express();
 const http = require("http").createServer(app);
@@ -11,7 +11,7 @@ app.use(express.static("public"));
 
 let players = {};
 let bonuses = [];
-let projectiles = [];
+let mines = [];
 let targets = {};
 let gameEnded = false;
 
@@ -76,7 +76,6 @@ io.on("connection", (socket) => {
       units: 10,
       name,
       color,
-      direction: { x: 0, y: -1 },
       dead: false,
       score: 0
     };
@@ -90,20 +89,11 @@ io.on("connection", (socket) => {
     targets[socket.id] = target;
   });
 
-  socket.on("fire", (dir) => {
+  socket.on("placeMine", () => {
     const p = players[socket.id];
     if (!p || p.dead || p.units <= 1) return;
-    if (typeof dir.x !== 'number' || typeof dir.y !== 'number') return;
     p.units--;
-    projectiles.push({
-      id: Date.now() + Math.random(),
-      from: socket.id,
-      x: p.x,
-      y: p.y,
-      dx: dir.x * 6,
-      dy: dir.y * 6,
-      color: p.color
-    });
+    mines.push({ id: Date.now(), x: p.x, y: p.y, owner: socket.id });
   });
 
   socket.on("disconnect", () => {
@@ -116,32 +106,7 @@ io.on("connection", (socket) => {
 setInterval(() => {
   if (gameEnded) return;
 
-  projectiles = projectiles.filter(p => {
-    p.x += p.dx;
-    p.y += p.dy;
-    if (p.x < 0 || p.y < 0 || p.x > ARENA_WIDTH || p.y > ARENA_HEIGHT) return false;
-
-    for (const id in players) {
-      const t = players[id];
-      if (t.dead || id === p.from) continue;
-      const dist = Math.hypot(p.x - t.x, p.y - t.y);
-      if (dist < getRadius(t.units)) {
-        players[p.from].units += 2;
-        players[p.from].score += 2;
-        t.units -= 2;
-        io.to(p.from).emit("hit");
-        io.to(t.id).emit("hit");
-        if (t.units <= 0) {
-          t.dead = true;
-          io.to(t.id).emit("dead");
-          io.emit("laser");
-        }
-        return false;
-      }
-    }
-    return true;
-  });
-
+  // Déplacement vers la cible
   for (const id in targets) {
     const target = targets[id];
     const p = players[id];
@@ -166,6 +131,7 @@ setInterval(() => {
     }
   }
 
+  // Absorptions entre joueurs
   const ids = Object.keys(players);
   for (let i = 0; i < ids.length; i++) {
     for (let j = i + 1; j < ids.length; j++) {
@@ -209,6 +175,24 @@ setInterval(() => {
     }
   }
 
+  // Mines
+  for (const id in players) {
+    const p = players[id];
+    if (p.dead) continue;
+    mines = mines.filter(m => {
+      if (m.owner === id) return true; // Pas sur sa propre mine
+      const dist = Math.hypot(p.x - m.x, p.y - m.y);
+      if (dist < 20) {
+        p.units -= 2;
+        if (players[m.owner]) players[m.owner].units += 2;
+        io.to(p.id).emit("laser");
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Bonus
   for (const id in players) {
     const p = players[id];
     if (p.dead) continue;
@@ -222,13 +206,14 @@ setInterval(() => {
       }
       return true;
     });
+
     if (p.units >= 500 && !gameEnded) {
       gameEnded = true;
       io.emit("win", p.name);
     }
   }
 
-  io.emit("state", { players, bonuses, projectiles, walls });
+  io.emit("state", { players, bonuses, walls, mines });
 }, 1000 / 30);
 
 http.listen(PORT, () => {

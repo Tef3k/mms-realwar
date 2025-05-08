@@ -48,6 +48,7 @@
   <audio id="death" src="/sounds/death.mp3"></audio>
   <audio id="laser" src="/sounds/laser.mp3"></audio>
   <audio id="toc" src="/sounds/toc.mp3"></audio>
+  <audio id="music" src="/sounds/western.mp3" autoplay loop></audio>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
@@ -61,8 +62,8 @@
     let playerId = null;
     let players = {};
     let bonuses = [];
-    let projectiles = [];
     let walls = [];
+    let mines = [];
     let eliminated = false;
 
     const bloop = document.getElementById("bloop");
@@ -93,8 +94,8 @@
     socket.on("state", (state) => {
       players = state.players;
       bonuses = state.bonuses;
-      projectiles = state.projectiles;
       walls = state.walls;
+      mines = state.mines || [];
     });
 
     socket.on("bloop", () => bloop.play());
@@ -125,16 +126,12 @@
 
     window.addEventListener("keydown", (e) => {
       if (eliminated) return;
-      if (e.key === "z") socket.emit("fire", { x: 0, y: -1 });
-      if (e.key === "s") socket.emit("fire", { x: 0, y: 1 });
-      if (e.key === "q") socket.emit("fire", { x: -1, y: 0 });
-      if (e.key === "d") socket.emit("fire", { x: 1, y: 0 });
+      if (e.code === "Space") socket.emit("placeMine");
     });
 
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Mur / cadre blanc
       ctx.strokeStyle = "white";
       ctx.lineWidth = 5;
       ctx.strokeRect(0, 0, canvas.width, canvas.height);
@@ -153,9 +150,10 @@
         ctx.fillText("+" + b.amount, b.x, b.y + 3);
       }
 
-      for (const p of projectiles) {
-        ctx.fillStyle = p.color || "white";
-        ctx.fillRect(p.x - 4, p.y - 4, 8, 8);
+      for (const m of mines) {
+        const color = players[m.owner]?.color || "gray";
+        ctx.fillStyle = color;
+        ctx.fillRect(m.x - 5, m.y - 5, 10, 10);
       }
 
       for (const id in players) {
